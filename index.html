@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absensi QR Kelas 5 - SDN Kubang Apu</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#172554}
+header{background:#155e75;color:white;padding:22px 15px;text-align:center}
+header h1{margin:0 0 6px;font-size:23px}header p{margin:0}
+main{max-width:1000px;margin:20px auto;padding:0 14px}
+.card{background:white;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 3px 12px #0f172a12}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:15px}
+button,.btn{border:0;border-radius:9px;padding:11px 15px;background:#0e7490;color:white;font-weight:bold;cursor:pointer}
+button.secondary{background:#475569}button.green{background:#15803d}button.orange{background:#c2410c}
+input,select{padding:11px;border:1px solid #cbd5e1;border-radius:8px;width:100%;margin:6px 0 12px;font-size:15px}
+label{font-weight:bold;font-size:14px}
+#reader{max-width:500px;margin:12px auto}
+.msg{padding:12px;border-radius:8px;margin:10px 0;background:#e0f2fe}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #e2e8f0;text-align:left}th{background:#ecfeff}
+.tablewrap{overflow:auto}.hidden{display:none}.qrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.qrstudent{border:1px dashed #94a3b8;border-radius:10px;padding:12px;text-align:center;break-inside:avoid}
+.qrstudent strong{display:block;margin:6px 0}.qrstudent small{color:#475569}
+@media print{header,.tabs,.noprint,.card.controls{display:none!important}body{background:white}main{max-width:none;margin:0;padding:0}.card{box-shadow:none}.qrgrid{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<header><h1>ABSENSI DIGITAL QR CODE</h1><p>Kelas 5 · SDN Kubang Apu</p></header>
+<main>
+<div class="tabs noprint">
+<button onclick="showTab('scan')">Scan QR</button>
+<button class="secondary" onclick="showTab('manual')">Absen Manual</button>
+<button class="secondary" onclick="showTab('data')">Rekap Absensi</button>
+<button class="secondary" onclick="showTab('cards')">Cetak Kartu QR</button>
+</div>
+<section id="scan" class="card">
+<h2>Scan Kehadiran</h2>
+<p>Arahkan QR siswa ke kamera. Sistem mencegah absensi ganda pada tanggal yang sama.</p>
+<div class="noprint"><button onclick="startCamera()">Buka Kamera</button> <button class="secondary" onclick="stopCamera()">Tutup Kamera</button></div>
+<div id="reader"></div><div id="scanMsg" class="msg">Kamera belum dijalankan.</div>
+</section>
+<section id="manual" class="card hidden">
+<h2>Input Absensi Manual</h2>
+<label>Pilih siswa</label><select id="studentSelect"></select>
+<label>Status</label><select id="manualStatus"><option>Hadir</option><option>Izin</option><option>Sakit</option><option>Alpa</option></select>
+<button class="green" onclick="manualSave()">Simpan Absensi</button><div id="manualMsg" class="msg"></div>
+</section>
+<section id="data" class="card hidden">
+<h2>Rekap Absensi</h2><label>Tanggal</label><input type="date" id="reportDate">
+<button onclick="loadReport()">Tampilkan Rekap</button>
+<div id="summary" class="msg"></div><div class="tablewrap"><table><thead><tr><th>Waktu</th><th>NIS</th><th>Nama</th><th>Kelas</th><th>Status</th></tr></thead><tbody id="reportBody"></tbody></table></div>
+</section>
+<section id="cards" class="card hidden">
+<h2>Kartu QR Siswa</h2><p>QR dibuat otomatis dari NIS pada sheet Siswa. Cetak dan bagikan satu kartu untuk setiap siswa.</p>
+<button onclick="printCards()">Cetak Kartu</button><div id="qrGrid" class="qrgrid" style="margin-top:15px"></div>
+</section>
+<p id="globalMsg" class="msg">Menghubungkan ke database...</p>
+</main>
+<script>
+// GANTI dua nilai di bawah ini sesuai panduan README.
+const API_URL = "12aBox_IrwuRlsHUASDkLi8m1LiTVh4gfz-kBdpUmNAs";
+const API_KEY = "Kode_rahasia12345";
+let students = [], scanner = null, busy = false;
+
+function api(params) {
+  return new Promise((resolve,reject)=>{
+    const cb="cb_"+Date.now()+"_"+Math.floor(Math.random()*100000);
+    const script=document.createElement("script");
+    const timer=setTimeout(()=>{cleanup();reject(new Error("Server tidak merespons. Periksa URL Apps Script dan koneksi."));},15000);
+    function cleanup(){clearTimeout(timer);delete window[cb];script.remove();}
+    window[cb]=(data)=>{cleanup();if(data && data.ok)resolve(data);else reject(new Error(data?.message||"Terjadi kesalahan."));};
+    const query=new URLSearchParams({...params,key:API_KEY,callback:cb});
+    script.src=API_URL+"?"+query.toString();
+    script.onerror=()=>{cleanup();reject(new Error("Gagal menghubungi Apps Script. Periksa URL /exec."));};
+    document.body.appendChild(script);
+  });
+}
+function showTab(id){
+  ["scan","manual","data","cards"].forEach(x=>document.getElementById(x).classList.toggle("hidden",x!==id));
+  document.querySelectorAll(".tabs button").forEach(b=>b.classList.add("secondary"));
+  event?.target?.classList.remove("secondary");
+  if(id==="cards") renderCards();
+  if(id==="data") loadReport();
+}
+function message(id,text){document.getElementById(id).textContent=text;}
+async function init(){
+  try{
+    const d=await api({action:"students"});students=d.students;
+    const sel=document.getElementById("studentSelect");
+    sel.innerHTML=students.map(s=>`<option value="${escapeHtml(s.nis)}">${escapeHtml(s.nis)} - ${escapeHtml(s.nama)}</option>`).join("");
+    document.getElementById("reportDate").value=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Jakarta"});
+    message("globalMsg",`Terhubung. ${students.length} siswa aktif dimuat.`);
+  }catch(e){message("globalMsg","Koneksi gagal: "+e.message);}
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+async function saveNis(nis,status,target){
+  if(busy)return;busy=true;
+  try{
+    const d=await api({action:"scan",nis,status});
+    message(target,d.message+(d.nama?" - "+d.nama:""));
+    if(d.duplicate) message(target,"⚠ "+d.message+" ("+d.nama+")");
+    else message(target,"✓ "+d.message+" "+d.nama+" · "+d.status);
+  }catch(e){message(target,"Gagal: "+e.message);}
+  finally{busy=false;}
+}
+async function startCamera(){
+  if(!window.Html5Qrcode){message("scanMsg","Pustaka pemindai gagal dimuat. Periksa internet.");return;}
+  try{
+    if(!scanner)scanner=new Html5Qrcode("reader");
+    const cameras=await Html5Qrcode.getCameras();
+    if(!cameras.length)throw new Error("Kamera tidak ditemukan.");
+    const camera=cameras.find(c=>/back|environment|belakang/i.test(c.label))||cameras[0];
+    await scanner.start(camera.id,{fps:10,qrbox:{width:240,height:240}},async text=>{
+      if(busy)return;
+      const nis=String(text).trim();
+      if(!students.some(s=>s.nis===nis)){message("scanMsg","QR tidak dikenal: "+nis);return;}
+      await saveNis(nis,"Hadir","scanMsg");
+    });
+    message("scanMsg","Kamera aktif. Arahkan QR siswa ke kotak pemindai.");
+  }catch(e){message("scanMsg","Kamera gagal dibuka: "+e.message+". Izinkan kamera browser dan gunakan alamat HTTPS GitHub Pages.");}
+}
+async function stopCamera(){try{if(scanner&&scanner.isScanning)await scanner.stop();message("scanMsg","Kamera ditutup.");}catch(e){message("scanMsg",e.message);}}
+async function manualSave(){const nis=document.getElementById("studentSelect").value;const status=document.getElementById("manualStatus").value;await saveNis(nis,status,"manualMsg");}
+async function loadReport(){
+  try{
+    const d=await api({action:"report",date:document.getElementById("reportDate").value});
+    const c=d.count;
+    message("summary",`Tanggal ${d.date} | Total tercatat: ${d.total} | Hadir: ${c.Hadir} | Izin: ${c.Izin} | Sakit: ${c.Sakit} | Alpa: ${c.Alpa}`);
+    document.getElementById("reportBody").innerHTML=d.records.map(r=>`<tr><td>${escapeHtml(r.waktu)}</td><td>${escapeHtml(r.nis)}</td><td>${escapeHtml(r.nama)}</td><td>${escapeHtml(r.kelas)}</td><td>${escapeHtml(r.status)}</td></tr>`).join("")||'<tr><td colspan="5">Belum ada data.</td></tr>';
+  }catch(e){message("summary","Gagal memuat rekap: "+e.message);}
+}
+function renderCards(){
+  const grid=document.getElementById("qrGrid");grid.innerHTML="";
+  students.forEach((s,i)=>{
+    const card=document.createElement("div");card.className="qrstudent";
+    const title=document.createElement("strong");title.textContent=s.nama;
+    const info=document.createElement("small");info.textContent=`Kelas ${s.kelas} · NIS ${s.nis}`;
+    const qr=document.createElement("div");qr.id="qr_"+i;qr.style.display="flex";qr.style.justifyContent="center";qr.style.margin="8px";
+    card.append(title,qr,info);grid.appendChild(card);
+    new QRCode(qr,{text:s.nis,width:120,height:120,correctLevel:QRCode.CorrectLevel.M});
+  });
+}
+function printCards(){renderCards();setTimeout(()=>window.print(),500);}
+init();
+</script>
+</body></html>
